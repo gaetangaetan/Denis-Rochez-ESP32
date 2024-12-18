@@ -24,22 +24,99 @@ Preferences preferences;
 // Page HTML (avec placeholders pour les variables)
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
-<head><title>Réglages de la Lampe</title></head>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Réglages de la Lampe</title>
+<style>
+  body {
+    margin: 0;
+    padding: 20px;
+    background-color: #FFFFCC; /* Fond pâle jaune */
+    font-family: "Instrument Sans", sans-serif;
+    color: #333;
+    font-weight: bold; /* Appliquer le gras globalement, ou sur les éléments souhaités */
+  }
+
+  h1 {
+    font-size: 48px;
+    color: #00BFFF;
+    margin: 0;
+    padding: 0;
+    font-weight: bold; /* Assure que le titre soit en gras */
+  }
+
+  .container {
+    width: 80%;
+    margin: 0 auto;
+    text-align: left;
+  }
+
+  .label {
+    font-size: 20px;
+    font-weight: bold; /* Les labels sont en gras */
+    color: #000;
+    margin-top: 30px;
+    margin-bottom: 10px;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    -webkit-appearance: none; 
+    background: #ccc; 
+    height: 10px;
+    border-radius: 5px;
+    outline: none;
+    margin-bottom: 10px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; 
+    width: 20px;
+    height: 20px;
+    background: #00BFFF;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid #333;
+  }
+
+  input[type="color"] {
+    width: 100%;
+    height: 40px;
+    border: none;
+    padding: 0;
+    background: #ccc;
+    cursor: pointer;
+    margin-bottom: 20px;
+  }
+
+  .footer-image {
+    display: block;
+    margin: 40px auto 0;
+    width: 80%;
+  }
+</style>
+</head>
 <body>
-<h1>Réglages de la Lampe</h1>
-<form id="controlForm" action="/set" method="GET">
-  <label>Max Volume:</label>
-  <input type="range" name="maxVolume" min="0" max="1000" value="%MAX_VOLUME%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-  <output>%MAX_VOLUME%</output><br><br>
+<div class="container">
+  <h1>DenisDenis</h1>
+  <form id="controlForm" action="/set" method="GET">
 
-  <label>Smoothing Factor:</label>
-  <input type="range" name="smoothingFactor" step="0.01" min="0.0" max="1.0" value="%SMOOTHING_FACTOR%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-  <output>%SMOOTHING_FACTOR%</output><br><br>
+    <div class="label">sensibility</div>
+    <input type="range" name="maxVolume" min="0" max="1000" value="%MAX_VOLUME%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+    <output>%MAX_VOLUME%</output>
 
-  <label>Base Color:</label>
-  <input type="color" name="baseColor" value="#ffffff" oninput="updateValues()"><br><br>
-</form>
+    <div class="label">smoothness</div>
+    <input type="range" name="smoothingFactor" step="0.01" min="0.0" max="1.0" value="%SMOOTHING_FACTOR%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+    <output>%SMOOTHING_FACTOR%</output>
+
+    <div class="label">color picker</div>
+    <input type="color" name="baseColor" value="#ffffff" oninput="updateValues()">
+
+  </form>
+
+  <img src="https://denisdenis.gaetanstreel.com/denis.png" alt="Rock Hand" class="footer-image">
+</div>
 
 <script>
 function updateValues() {
@@ -49,8 +126,10 @@ function updateValues() {
   fetch(`/set?${queryString}`);
 }
 </script>
+
 </body>
 </html>
+
 )rawliteral";
 
 // Serveur Web
