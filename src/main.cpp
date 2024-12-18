@@ -107,7 +107,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <output>%MAX_VOLUME%</output>
 
     <div class="label">smoothness</div>
-    <input type="range" name="smoothingFactor" step="0.01" min="0.0" max="1.0" value="%SMOOTHING_FACTOR%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+    <input type="range" name="smoothingFactor" step="0.01" min="0.01" max="1.0" value="%SMOOTHING_FACTOR%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
     <output>%SMOOTHING_FACTOR%</output>
 
     <div class="label">color picker</div>
@@ -269,7 +269,7 @@ void setup() {
 
   // Configuration WiFi via WiFiManager
   WiFiManager wm;
-  wm.autoConnect("AfricanChild", "chacal");
+  wm.autoConnect("AfricanChild", "fuckthatshit");
   Serial.print("Connecté au WiFi, adresse IP: ");
   Serial.println(WiFi.localIP());
 
