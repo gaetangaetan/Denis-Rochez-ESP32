@@ -2,26 +2,26 @@
 #include <WebServer.h>
 #include <FastLED.h>
 #include <driver/i2s.h>
-#include <WiFiManager.h>    // WiFiManager pour la configuration WiFi
-#include <Preferences.h>    // Pour stocker les paramètres dans la NVS (mémoire flash)
+#include <WiFiManager.h>
+#include <Preferences.h>
 
-// Définition de la LED et de son nombre
+// Nombre maximum de LEDs autorisées
+#define MAX_LEDS 144
 #define LED_PIN 4
-#define LED_COUNT 10
 
-// Tableau de LEDs, gestion des couleurs
-CRGB leds[LED_COUNT];
+// Tableau de LEDs, gestion des couleurs (capacité max)
+CRGB leds[MAX_LEDS];
 CRGB baseColor = CRGB::White;
 
-// Paramètres configurables
-float maxVolume = 500;
-float smoothingFactor = 0.05;
+// Paramètres internes
+float maxVolume = 500;       // Interne : 200 à 3000
+float smoothingFactor = 0.05; // Interne : 1.0 à 0.01 (selon demande)
 float smoothedVolume = 0;
+int ledCount = 10;           // Valeur par défaut du nombre de LEDs
 
 // Objet Preferences
 Preferences preferences;
 
-// Page HTML (avec placeholders pour les variables)
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="fr">
@@ -32,10 +32,10 @@ const char index_html[] PROGMEM = R"rawliteral(
   body {
     margin: 0;
     padding: 20px;
-    background-color: #FFFFCC; /* Fond pâle jaune */
+    background-color: #FFFFCC;
     font-family: "Instrument Sans", sans-serif;
     color: #333;
-    font-weight: bold; /* Appliquer le gras globalement, ou sur les éléments souhaités */
+    font-weight: bold;
   }
 
   h1 {
@@ -43,7 +43,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     color: #00BFFF;
     margin: 0;
     padding: 0;
-    font-weight: bold; /* Assure que le titre soit en gras */
+    font-weight: bold;
   }
 
   .container {
@@ -54,7 +54,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   .label {
     font-size: 20px;
-    font-weight: bold; /* Les labels sont en gras */
+    font-weight: bold;
     color: #000;
     margin-top: 30px;
     margin-bottom: 10px;
@@ -102,13 +102,19 @@ const char index_html[] PROGMEM = R"rawliteral(
   <h1>DenisDenis</h1>
   <form id="controlForm" action="/set" method="GET">
 
+    <div class="label">Nombre de LEDs</div>
+    <input type="range" name="ledCount" min="0" max="144" value="%LED_COUNT%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+    <output>%LED_COUNT%</output>
+
     <div class="label">sensibility</div>
-    <input type="range" name="maxVolume" min="0" max="1000" value="%MAX_VOLUME%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-    <output>%MAX_VOLUME%</output>
+    <!-- Slider 0-100, interne : maxVolume 3000 à 200 -->
+    <input type="range" name="sensibility" min="0" max="100" value="%SENSIBILITY%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+    <output>%SENSIBILITY%</output>
 
     <div class="label">smoothness</div>
-    <input type="range" name="smoothingFactor" step="0.01" min="0.01" max="1.0" value="%SMOOTHING_FACTOR%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-    <output>%SMOOTHING_FACTOR%</output>
+    <!-- Slider 0-100, interne : smoothingFactor 1.0 à 0.01 -->
+    <input type="range" name="smoothness" min="0" max="100" value="%SMOOTHNESS_SLIDER%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+    <output>%SMOOTHNESS_SLIDER%</output>
 
     <div class="label">color picker</div>
     <input type="color" name="baseColor" value="#ffffff" oninput="updateValues()">
@@ -129,17 +135,35 @@ function updateValues() {
 
 </body>
 </html>
-
 )rawliteral";
 
 // Serveur Web
 WebServer server(80);
 
-// Remplacement des placeholders dans le HTML
 String htmlProcessor(const char* html) {
   String page = String(html);
-  page.replace("%MAX_VOLUME%", String(maxVolume));
-  page.replace("%SMOOTHING_FACTOR%", String(smoothingFactor, 2));
+
+  // Conversion interne maxVolume -> sensibility
+  // maxVolume dans [200,3000]
+  float constrainedMaxVolume = maxVolume;
+  if (constrainedMaxVolume > 3000) constrainedMaxVolume = 3000;
+  if (constrainedMaxVolume < 200) constrainedMaxVolume = 200;
+  
+  int sensibilitySlider = (int)((3000 - constrainedMaxVolume) / 28.0);
+  if (sensibilitySlider < 0) sensibilitySlider = 0;
+  if (sensibilitySlider > 100) sensibilitySlider = 100;
+
+  // Conversion interne smoothingFactor -> smoothnessSlider
+  // smoothingFactor dans [0.01,1.0]
+  // smoothnessSlider = (1.0 - smoothingFactor)/0.0099
+  int smoothnessSlider = (int)((1.0 - smoothingFactor) / 0.0099);
+  if (smoothnessSlider < 0) smoothnessSlider = 0;
+  if (smoothnessSlider > 100) smoothnessSlider = 100;
+
+  page.replace("%SENSIBILITY%", String(sensibilitySlider));
+  page.replace("%SMOOTHNESS_SLIDER%", String(smoothnessSlider));
+  page.replace("%LED_COUNT%", String(ledCount));
+
   return page;
 }
 
@@ -150,24 +174,50 @@ void setupWebServer() {
   });
 
   server.on("/set", HTTP_GET, [](){
-    if (server.hasArg("maxVolume")) {
-      maxVolume = server.arg("maxVolume").toFloat();
+    bool changed = false;
+
+    // sensibility -> maxVolume
+    if (server.hasArg("sensibility")) {
+      int sliderValue = server.arg("sensibility").toInt(); // 0 à 100
+      float newMaxVolume = 3000 - 28.0 * sliderValue;
+      maxVolume = newMaxVolume;
       preferences.putFloat("maxVolume", maxVolume);
     }
-    if (server.hasArg("smoothingFactor")) {
-      smoothingFactor = server.arg("smoothingFactor").toFloat();
+
+    // smoothness -> smoothingFactor
+    if (server.hasArg("smoothness")) {
+      int sliderValue = server.arg("smoothness").toInt(); // 0 à 100
+      float newSmoothingFactor = 1.0 - (0.0099 * sliderValue);
+      smoothingFactor = newSmoothingFactor;
       preferences.putFloat("smoothingFactor", smoothingFactor);
     }
+
     if (server.hasArg("baseColor")) {
       String color = server.arg("baseColor");
       long rgb = strtol(color.substring(1).c_str(), NULL, 16);
       baseColor = CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
-      fill_solid(leds, LED_COUNT, baseColor);
-      FastLED.show();
       preferences.putUChar("baseColorR", baseColor.r);
       preferences.putUChar("baseColorG", baseColor.g);
       preferences.putUChar("baseColorB", baseColor.b);
+      changed = true;
     }
+
+    if (server.hasArg("ledCount")) {
+      ledCount = server.arg("ledCount").toInt();
+      if (ledCount < 0) ledCount = 0;
+      if (ledCount > MAX_LEDS) ledCount = MAX_LEDS;
+      preferences.putUInt("ledCount", (unsigned int)ledCount);
+
+      fill_solid(leds, MAX_LEDS, CRGB::Black);
+      fill_solid(leds, ledCount, baseColor);
+      FastLED.show();
+    }
+
+    if (changed) {
+      fill_solid(leds, ledCount, baseColor);
+      FastLED.show();
+    }
+
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
   });
@@ -181,7 +231,7 @@ void setupI2SMic() {
     .sample_rate = 16000,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_I2S, 
+    .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 8,
     .dma_buf_len = 64,
@@ -211,7 +261,11 @@ int getVolume() {
     sum += abs(samples[i]);
   }
 
-  int volume = sum / (bytesRead / 2);
+  int volume = 0;
+  if ((bytesRead / 2) > 0) {
+    volume = sum / (bytesRead / 2);
+  }
+
   return volume;
 }
 
@@ -221,6 +275,10 @@ uint8_t lerp(uint8_t start, uint8_t end, float t) {
 
 // Calcul de la couleur en fonction du volume lissé
 CRGB getColorFromVolume(int volume) {
+  if (ledCount == 0) {
+    return CRGB::Black;
+  }
+
   float t;
   uint8_t r, g, b;
 
@@ -250,7 +308,7 @@ CRGB getColorFromVolume(int volume) {
 
 void setup() {
   Serial.begin(115200);
-  FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
+  FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, MAX_LEDS);
   FastLED.clear();
   FastLED.show();
 
@@ -264,7 +322,12 @@ void setup() {
   uint8_t g = preferences.getUChar("baseColorG", 255);
   uint8_t b = preferences.getUChar("baseColorB", 255);
   baseColor = CRGB(r, g, b);
-  fill_solid(leds, LED_COUNT, baseColor);
+
+  ledCount = preferences.getUInt("ledCount", 10);
+  if (ledCount > MAX_LEDS) ledCount = MAX_LEDS;
+
+  fill_solid(leds, MAX_LEDS, CRGB::Black);
+  fill_solid(leds, ledCount, baseColor);
   FastLED.show();
 
   // Configuration WiFi via WiFiManager
@@ -282,11 +345,13 @@ void loop() {
 
   int rawVolume = getVolume();
   smoothedVolume = (smoothingFactor * rawVolume) + ((1.0 - smoothingFactor) * smoothedVolume);
+
   Serial.print("Volume lissé: ");
   Serial.println(smoothedVolume);
 
   CRGB color = getColorFromVolume(smoothedVolume);
-  fill_solid(leds, LED_COUNT, color);
+  fill_solid(leds, MAX_LEDS, CRGB::Black);
+  fill_solid(leds, ledCount, color);
   FastLED.show();
   delay(50);
 }
