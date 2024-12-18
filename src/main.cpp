@@ -10,8 +10,11 @@
 CRGB leds[LED_COUNT];
 CRGB baseColor = CRGB::White;
 
-const char* ssid = "mrVOOlpy";
-const char* password = "youhououhou";
+const char* ssid = "Manege-Fonck";
+const char* password = "Festival";
+
+// const char* ssid = "mrVOOlpy";
+// const char* password = "youhououhou";
 
 // Création du serveur web
 AsyncWebServer server(80);
