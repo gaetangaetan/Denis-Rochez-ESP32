@@ -1,30 +1,27 @@
-
 #include <WiFi.h>
-#include <ESPAsyncWebServer.h>
+#include <WebServer.h>
 #include <FastLED.h>
 #include <driver/i2s.h>
+#include <WiFiManager.h>    // WiFiManager pour la configuration WiFi
+#include <Preferences.h>    // Pour stocker les paramètres dans la NVS (mémoire flash)
 
+// Définition de la LED et de son nombre
 #define LED_PIN 4
 #define LED_COUNT 10
 
+// Tableau de LEDs, gestion des couleurs
 CRGB leds[LED_COUNT];
 CRGB baseColor = CRGB::White;
-
-const char* ssid = "Manege-Fonck";
-const char* password = "Festival";
-
-// const char* ssid = "mrVOOlpy";
-// const char* password = "youhououhou";
-
-// Création du serveur web
-AsyncWebServer server(80);
 
 // Paramètres configurables
 float maxVolume = 500;
 float smoothingFactor = 0.05;
 float smoothedVolume = 0;
 
-// Page HTML simple
+// Objet Preferences
+Preferences preferences;
+
+// Page HTML (avec placeholders pour les variables)
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -56,48 +53,44 @@ function updateValues() {
 </html>
 )rawliteral";
 
-void setupWiFi() {
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connexion au WiFi...");
-  }
-  Serial.println("Connecté au WiFi !");
-  Serial.print("Adresse IP : ");
-  Serial.println(WiFi.localIP());
-}
+// Serveur Web
+WebServer server(80);
 
-String processor(const String& var) {
-  if (var == "MAX_VOLUME") {
-    return String(maxVolume);
-  } else if (var == "SMOOTHING_FACTOR") {
-    return String(smoothingFactor, 2);  // Précision à deux décimales
-  }
-  return String();
+// Remplacement des placeholders dans le HTML
+String htmlProcessor(const char* html) {
+  String page = String(html);
+  page.replace("%MAX_VOLUME%", String(maxVolume));
+  page.replace("%SMOOTHING_FACTOR%", String(smoothingFactor, 2));
+  return page;
 }
 
 void setupWebServer() {
-  // Page principale
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send_P(200, "text/html; charset=utf-8", index_html, processor);
+  server.on("/", HTTP_GET, [](){
+    String page = htmlProcessor(index_html);
+    server.send(200, "text/html; charset=utf-8", page);
   });
 
-  // Mise à jour des paramètres
-  server.on("/set", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (request->hasParam("maxVolume")) {
-      maxVolume = request->getParam("maxVolume")->value().toFloat();
+  server.on("/set", HTTP_GET, [](){
+    if (server.hasArg("maxVolume")) {
+      maxVolume = server.arg("maxVolume").toFloat();
+      preferences.putFloat("maxVolume", maxVolume);
     }
-    if (request->hasParam("smoothingFactor")) {
-      smoothingFactor = request->getParam("smoothingFactor")->value().toFloat();
+    if (server.hasArg("smoothingFactor")) {
+      smoothingFactor = server.arg("smoothingFactor").toFloat();
+      preferences.putFloat("smoothingFactor", smoothingFactor);
     }
-if (request->hasParam("baseColor")) {
-      String color = request->getParam("baseColor")->value();
+    if (server.hasArg("baseColor")) {
+      String color = server.arg("baseColor");
       long rgb = strtol(color.substring(1).c_str(), NULL, 16);
       baseColor = CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
       fill_solid(leds, LED_COUNT, baseColor);
       FastLED.show();
+      preferences.putUChar("baseColorR", baseColor.r);
+      preferences.putUChar("baseColorG", baseColor.g);
+      preferences.putUChar("baseColorB", baseColor.b);
     }
-    request->redirect("/");
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
   });
 
   server.begin();
@@ -105,11 +98,11 @@ if (request->hasParam("baseColor")) {
 
 void setupI2SMic() {
   i2s_config_t i2s_config = {
-    .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX),
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = 16000,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_I2S,
+    .communication_format = I2S_COMM_FORMAT_I2S, 
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 8,
     .dma_buf_len = 64,
@@ -127,6 +120,7 @@ void setupI2SMic() {
   i2s_set_pin(I2S_NUM_0, &pin_config);
 }
 
+// Lecture du volume depuis le microphone I2S
 int getVolume() {
   int16_t samples[64];
   size_t bytesRead;
@@ -134,7 +128,7 @@ int getVolume() {
   i2s_read(I2S_NUM_0, samples, sizeof(samples), &bytesRead, portMAX_DELAY);
 
   int32_t sum = 0;
-  for (int i = 0; i < bytesRead / 2; i++) {
+  for (int i = 0; i < (int)(bytesRead / 2); i++) {
     sum += abs(samples[i]);
   }
 
@@ -146,37 +140,30 @@ uint8_t lerp(uint8_t start, uint8_t end, float t) {
   return start + (end - start) * t;
 }
 
-
-// Calcul de la couleur interpolée
+// Calcul de la couleur en fonction du volume lissé
 CRGB getColorFromVolume(int volume) {
-  float t;  // Facteur d'interpolation (0.0 à 1.0)
+  float t;
   uint8_t r, g, b;
 
   if (volume <= maxVolume / 3) {
-    // Interpolation Blanc -> Vert
     t = (float)volume / (maxVolume / 3);
     r = lerp(baseColor.r, 0, t);
     g = lerp(baseColor.g, 255, t);
     b = lerp(baseColor.b, 0, t);
-  } 
-  else if (volume <= 2 * maxVolume / 3) {
-    // Interpolation Vert -> Jaune
+  } else if (volume <= 2 * maxVolume / 3) {
     t = (float)(volume - maxVolume / 3) / (maxVolume / 3);
     r = lerp(0, 255, t);
     g = lerp(255, 255, t);
     b = lerp(0, 0, t);
-  } 
-  else if (volume <= maxVolume){
-    // Interpolation Jaune -> Rouge
+  } else if (volume <= maxVolume) {
     t = (float)(volume - 2 * maxVolume / 3) / (maxVolume / 3);
     r = lerp(255, 255, t);
     g = lerp(255, 0, t);
     b = lerp(0, 0, t);
-  }
-  else {
-  r = 255;
-  g = 0;
-  b = 0;
+  } else {
+    r = 255;
+    g = 0;
+    b = 0;
   }
 
   return CRGB(r, g, b);
@@ -187,15 +174,36 @@ void setup() {
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
   FastLED.clear();
   FastLED.show();
-  setupWiFi();
+
+  // Ouverture des préférences
+  preferences.begin("config", false);
+
+  // Lecture des valeurs depuis la NVS (ou valeurs par défaut)
+  maxVolume = preferences.getFloat("maxVolume", 500);
+  smoothingFactor = preferences.getFloat("smoothingFactor", 0.05);
+  uint8_t r = preferences.getUChar("baseColorR", 255);
+  uint8_t g = preferences.getUChar("baseColorG", 255);
+  uint8_t b = preferences.getUChar("baseColorB", 255);
+  baseColor = CRGB(r, g, b);
+  fill_solid(leds, LED_COUNT, baseColor);
+  FastLED.show();
+
+  // Configuration WiFi via WiFiManager
+  WiFiManager wm;
+  wm.autoConnect("AfricanChild", "chacal");
+  Serial.print("Connecté au WiFi, adresse IP: ");
+  Serial.println(WiFi.localIP());
+
   setupWebServer();
   setupI2SMic();
 }
 
 void loop() {
+  server.handleClient();
+
   int rawVolume = getVolume();
   smoothedVolume = (smoothingFactor * rawVolume) + ((1.0 - smoothingFactor) * smoothedVolume);
-  Serial.print(" | smoothedVolume : ");
+  Serial.print("Volume lissé: ");
   Serial.println(smoothedVolume);
 
   CRGB color = getColorFromVolume(smoothedVolume);
