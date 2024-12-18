@@ -4,6 +4,7 @@
 #include <driver/i2s.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
+#include <ESPmDNS.h> // Pour le mDNS
 
 // Nombre maximum de LEDs autorisées
 #define MAX_LEDS 144
@@ -14,10 +15,10 @@ CRGB leds[MAX_LEDS];
 CRGB baseColor = CRGB::White;
 
 // Paramètres internes
-float maxVolume = 500;       // Interne : 200 à 3000
-float smoothingFactor = 0.05; // Interne : 1.0 à 0.01 (selon demande)
+float maxVolume = 500;        // Interne : 200 à 3000
+float smoothingFactor = 0.05; // Interne : 1.0 à 0.01
 float smoothedVolume = 0;
-int ledCount = 10;           // Valeur par défaut du nombre de LEDs
+int ledCount = 10;            // Nombre de LEDs
 
 // Objet Preferences
 Preferences preferences;
@@ -143,8 +144,7 @@ WebServer server(80);
 String htmlProcessor(const char* html) {
   String page = String(html);
 
-  // Conversion interne maxVolume -> sensibility
-  // maxVolume dans [200,3000]
+  // maxVolume -> sensibility (0-100)
   float constrainedMaxVolume = maxVolume;
   if (constrainedMaxVolume > 3000) constrainedMaxVolume = 3000;
   if (constrainedMaxVolume < 200) constrainedMaxVolume = 200;
@@ -153,9 +153,7 @@ String htmlProcessor(const char* html) {
   if (sensibilitySlider < 0) sensibilitySlider = 0;
   if (sensibilitySlider > 100) sensibilitySlider = 100;
 
-  // Conversion interne smoothingFactor -> smoothnessSlider
-  // smoothingFactor dans [0.01,1.0]
-  // smoothnessSlider = (1.0 - smoothingFactor)/0.0099
+  // smoothingFactor -> smoothnessSlider (0-100)
   int smoothnessSlider = (int)((1.0 - smoothingFactor) / 0.0099);
   if (smoothnessSlider < 0) smoothnessSlider = 0;
   if (smoothnessSlider > 100) smoothnessSlider = 100;
@@ -178,7 +176,7 @@ void setupWebServer() {
 
     // sensibility -> maxVolume
     if (server.hasArg("sensibility")) {
-      int sliderValue = server.arg("sensibility").toInt(); // 0 à 100
+      int sliderValue = server.arg("sensibility").toInt();
       float newMaxVolume = 3000 - 28.0 * sliderValue;
       maxVolume = newMaxVolume;
       preferences.putFloat("maxVolume", maxVolume);
@@ -186,7 +184,7 @@ void setupWebServer() {
 
     // smoothness -> smoothingFactor
     if (server.hasArg("smoothness")) {
-      int sliderValue = server.arg("smoothness").toInt(); // 0 à 100
+      int sliderValue = server.arg("smoothness").toInt();
       float newSmoothingFactor = 1.0 - (0.0099 * sliderValue);
       smoothingFactor = newSmoothingFactor;
       preferences.putFloat("smoothingFactor", smoothingFactor);
@@ -249,7 +247,6 @@ void setupI2SMic() {
   i2s_set_pin(I2S_NUM_0, &pin_config);
 }
 
-// Lecture du volume depuis le microphone I2S
 int getVolume() {
   int16_t samples[64];
   size_t bytesRead;
@@ -273,7 +270,6 @@ uint8_t lerp(uint8_t start, uint8_t end, float t) {
   return start + (end - start) * t;
 }
 
-// Calcul de la couleur en fonction du volume lissé
 CRGB getColorFromVolume(int volume) {
   if (ledCount == 0) {
     return CRGB::Black;
@@ -312,10 +308,8 @@ void setup() {
   FastLED.clear();
   FastLED.show();
 
-  // Ouverture des préférences
   preferences.begin("config", false);
 
-  // Lecture des valeurs depuis la NVS (ou valeurs par défaut)
   maxVolume = preferences.getFloat("maxVolume", 500);
   smoothingFactor = preferences.getFloat("smoothingFactor", 0.05);
   uint8_t r = preferences.getUChar("baseColorR", 255);
@@ -335,6 +329,11 @@ void setup() {
   wm.autoConnect("AfricanChild", "fuckthatshit");
   Serial.print("Connecté au WiFi, adresse IP: ");
   Serial.println(WiFi.localIP());
+
+  // Initialisation mDNS avec le nom "fuckthatshit"
+  if (MDNS.begin("fuckthatshit")) {
+    Serial.println("mDNS responder started. Accédez à la page sur http://fuckthatshit.local/");
+  }
 
   setupWebServer();
   setupI2SMic();
