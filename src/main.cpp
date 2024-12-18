@@ -8,6 +8,7 @@
 #define LED_COUNT 10
 
 CRGB leds[LED_COUNT];
+CRGB baseColor = CRGB::White;
 
 const char* ssid = "mrVOOlpy";
 const char* password = "youhououhou";
@@ -27,13 +28,27 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head><title>Réglages de la Lampe</title></head>
 <body>
 <h1>Réglages de la Lampe</h1>
-<form action="/set" method="GET">
+<form id="controlForm" action="/set" method="GET">
   <label>Max Volume:</label>
-  <input type="number" name="maxVolume" min="0" max="2000" value="%MAX_VOLUME%"><br><br>
+  <input type="range" name="maxVolume" min="0" max="1000" value="%MAX_VOLUME%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+  <output>%MAX_VOLUME%</output><br><br>
+
   <label>Smoothing Factor:</label>
-  <input type="number" name="smoothingFactor" step="0.01" min="0.001" max="1.0" value="%SMOOTHING_FACTOR%"><br><br>
-  <input type="submit" value="Mettre à jour">
+  <input type="range" name="smoothingFactor" step="0.01" min="0.0" max="1.0" value="%SMOOTHING_FACTOR%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
+  <output>%SMOOTHING_FACTOR%</output><br><br>
+
+  <label>Base Color:</label>
+  <input type="color" name="baseColor" value="#ffffff" oninput="updateValues()"><br><br>
 </form>
+
+<script>
+function updateValues() {
+  const form = document.getElementById('controlForm');
+  const formData = new FormData(form);
+  const queryString = new URLSearchParams(formData).toString();
+  fetch(`/set?${queryString}`);
+}
+</script>
 </body>
 </html>
 )rawliteral";
@@ -71,6 +86,13 @@ void setupWebServer() {
     }
     if (request->hasParam("smoothingFactor")) {
       smoothingFactor = request->getParam("smoothingFactor")->value().toFloat();
+    }
+if (request->hasParam("baseColor")) {
+      String color = request->getParam("baseColor")->value();
+      long rgb = strtol(color.substring(1).c_str(), NULL, 16);
+      baseColor = CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+      fill_solid(leds, LED_COUNT, baseColor);
+      FastLED.show();
     }
     request->redirect("/");
   });
@@ -130,9 +152,9 @@ CRGB getColorFromVolume(int volume) {
   if (volume <= maxVolume / 3) {
     // Interpolation Blanc -> Vert
     t = (float)volume / (maxVolume / 3);
-    r = lerp(255, 0, t);
-    g = lerp(255, 255, t);
-    b = lerp(255, 0, t);
+    r = lerp(baseColor.r, 0, t);
+    g = lerp(baseColor.g, 255, t);
+    b = lerp(baseColor.b, 0, t);
   } 
   else if (volume <= 2 * maxVolume / 3) {
     // Interpolation Vert -> Jaune
