@@ -19,6 +19,7 @@ float maxVolume = 500;        // Interne : 200 à 3000
 float smoothingFactor = 0.05; // Interne : 1.0 à 0.01
 float smoothedVolume = 0;
 int ledCount = 10;            // Nombre de LEDs
+int mode = 0;                 // 0: Audio (réactif), 1: Fixe
 
 // Objet Preferences
 Preferences preferences;
@@ -27,9 +28,15 @@ const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@700&display=swap" rel="stylesheet">
+
 <meta charset="UTF-8">
-<title>Réglages de la Lampe</title>
+<title>FUCK THAT SHIT</title>
 <style>
+
+
   body {
     margin: 0;
     padding: 20px;
@@ -46,6 +53,14 @@ const char index_html[] PROGMEM = R"rawliteral(
     padding: 0;
     font-weight: bold;
   }
+  .instrument-sans-custom {
+  font-family: "Instrument Sans", serif;
+  font-optical-sizing: auto;
+  font-weight: 700;
+  font-style: normal;
+  font-variation-settings:
+    "wdth" 100;
+}
 
   .container {
     width: 80%;
@@ -91,6 +106,17 @@ const char index_html[] PROGMEM = R"rawliteral(
     margin-bottom: 20px;
   }
 
+  input[type="button"] {
+    width: 100%;
+    height: 50px;
+    font-size: 20px;
+    background: #00BFFF;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    margin-top: 20px;
+  }
+
   .footer-image {
     display: block;
     margin: 40px auto 0;
@@ -100,25 +126,25 @@ const char index_html[] PROGMEM = R"rawliteral(
 </head>
 <body>
 <div class="container">
-  <h1>DenisDenis</h1>
+  <h1 class="instrument-sans-custom">DenisDenis</h1>
   <form id="controlForm" action="/set" method="GET">
 
     <div class="label">Nombre de LEDs</div>
     <input type="range" name="ledCount" min="0" max="144" value="%LED_COUNT%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
     <output>%LED_COUNT%</output>
 
-    <div class="label">sensibility</div>
-    <!-- Slider 0-100, interne : maxVolume 3000 à 200 -->
+    <div class="label">Sensibility</div>
     <input type="range" name="sensibility" min="0" max="100" value="%SENSIBILITY%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
     <output>%SENSIBILITY%</output>
 
-    <div class="label">smoothness</div>
-    <!-- Slider 0-100, interne : smoothingFactor 1.0 à 0.01 -->
+    <div class="label">Smoothness</div>
     <input type="range" name="smoothness" min="0" max="100" value="%SMOOTHNESS_SLIDER%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
     <output>%SMOOTHNESS_SLIDER%</output>
 
-    <div class="label">color picker</div>
+    <div class="label">Color picker</div>
     <input type="color" name="baseColor" value="#ffffff" oninput="updateValues()">
+
+    <input type="button" value="MODE %MODE_LABEL%" onclick="toggleMode()">
 
   </form>
 
@@ -132,13 +158,17 @@ function updateValues() {
   const queryString = new URLSearchParams(formData).toString();
   fetch(`/set?${queryString}`);
 }
+
+function toggleMode() {
+  fetch('/toggleMode');
+  setTimeout(() => window.location.reload(), 500);
+}
 </script>
 
 </body>
 </html>
 )rawliteral";
 
-// Serveur Web
 WebServer server(80);
 
 String htmlProcessor(const char* html) {
@@ -158,9 +188,12 @@ String htmlProcessor(const char* html) {
   if (smoothnessSlider < 0) smoothnessSlider = 0;
   if (smoothnessSlider > 100) smoothnessSlider = 100;
 
+  String modeLabel = (mode == 0) ? "AUDIO" : "FIXE";
+
   page.replace("%SENSIBILITY%", String(sensibilitySlider));
   page.replace("%SMOOTHNESS_SLIDER%", String(smoothnessSlider));
   page.replace("%LED_COUNT%", String(ledCount));
+  page.replace("%MODE_LABEL%", modeLabel);
 
   return page;
 }
@@ -185,7 +218,7 @@ void setupWebServer() {
     // smoothness -> smoothingFactor
     if (server.hasArg("smoothness")) {
       int sliderValue = server.arg("smoothness").toInt();
-      float newSmoothingFactor = 1.0 - (0.0099 * sliderValue);
+      float newSmoothingFactor = (1.0 - (0.0099 * sliderValue))/10.0;
       smoothingFactor = newSmoothingFactor;
       preferences.putFloat("smoothingFactor", smoothingFactor);
     }
@@ -206,6 +239,7 @@ void setupWebServer() {
       if (ledCount > MAX_LEDS) ledCount = MAX_LEDS;
       preferences.putUInt("ledCount", (unsigned int)ledCount);
 
+      // On met à jour l'affichage si on a changé la couleur ou le nombre de LEDs
       fill_solid(leds, MAX_LEDS, CRGB::Black);
       fill_solid(leds, ledCount, baseColor);
       FastLED.show();
@@ -218,6 +252,13 @@ void setupWebServer() {
 
     server.sendHeader("Location", "/");
     server.send(302, "text/plain", "");
+  });
+
+  // Handler pour toggler le mode
+  server.on("/toggleMode", HTTP_GET, [](){
+    mode = (mode == 0) ? 1 : 0;
+    preferences.putUInt("mode", (unsigned int)mode);
+    server.send(200, "text/plain", "Mode changé");
   });
 
   server.begin();
@@ -253,14 +294,15 @@ int getVolume() {
 
   i2s_read(I2S_NUM_0, samples, sizeof(samples), &bytesRead, portMAX_DELAY);
 
+  int count = bytesRead / 2; // Nombre d'échantillons
   int32_t sum = 0;
-  for (int i = 0; i < (int)(bytesRead / 2); i++) {
+  for (int i = 0; i < count; i++) {
     sum += abs(samples[i]);
   }
 
   int volume = 0;
-  if ((bytesRead / 2) > 0) {
-    volume = sum / (bytesRead / 2);
+  if (count > 0) {
+    volume = sum / count;
   }
 
   return volume;
@@ -319,10 +361,9 @@ void setup() {
 
   ledCount = preferences.getUInt("ledCount", 10);
   if (ledCount > MAX_LEDS) ledCount = MAX_LEDS;
+  if (ledCount < 0) ledCount = 0;
 
-  fill_solid(leds, MAX_LEDS, CRGB::Black);
-  fill_solid(leds, ledCount, baseColor);
-  FastLED.show();
+  mode = preferences.getUInt("mode", 0);
 
   // Configuration WiFi via WiFiManager
   WiFiManager wm;
@@ -342,15 +383,23 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  int rawVolume = getVolume();
-  smoothedVolume = (smoothingFactor * rawVolume) + ((1.0 - smoothingFactor) * smoothedVolume);
+  if (mode == 1) {
+    // Mode fixe : Couleur choisie, sans tenir compte du son
+    fill_solid(leds, MAX_LEDS, CRGB::Black);
+    fill_solid(leds, ledCount, baseColor);
+  } else {
+    // Mode audio : Réagit au son
+    int rawVolume = getVolume();
+    smoothedVolume = (smoothingFactor * rawVolume) + ((1.0 - smoothingFactor) * smoothedVolume);
 
-  Serial.print("Volume lissé: ");
-  Serial.println(smoothedVolume);
+    Serial.print("Volume lissé: ");
+    Serial.println(smoothedVolume);
 
-  CRGB color = getColorFromVolume(smoothedVolume);
-  fill_solid(leds, MAX_LEDS, CRGB::Black);
-  fill_solid(leds, ledCount, color);
+    CRGB color = getColorFromVolume(smoothedVolume);
+    fill_solid(leds, MAX_LEDS, CRGB::Black);
+    fill_solid(leds, ledCount, color);
+  }
+
   FastLED.show();
   delay(50);
 }
