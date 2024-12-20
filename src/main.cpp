@@ -5,7 +5,10 @@
 #include <WiFiManager.h>
 #include <Preferences.h>
 #include <ESPmDNS.h> // Pour le mDNS
+#include <HTTPClient.h>    // Nécessaire pour télécharger le firmware
+#include <Update.h>        // Nécessaire pour appliquer la mise à jour
 
+#define VERSION 17 // version du firmware
 // Nombre maximum de LEDs autorisées
 #define MAX_LEDS 144
 #define LED_PIN 4
@@ -24,19 +27,25 @@ int mode = 0;                 // 0: Audio (réactif), 1: Fixe
 // Objet Preferences
 Preferences preferences;
 
+// Objet WiFiManager
+WiFiManager wm;
+
 const char index_html[] PROGMEM = R"rawliteral(
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FUCK THAT SHIT</title>
+  <!-- 
+Firmware VERSION 17
+curseurs plus épais, le reste ne change pas
+        -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@700&display=swap" rel="stylesheet">
-
-<meta charset="UTF-8">
-<title>FUCK THAT SHIT</title>
 <style>
-
-
   body {
     margin: 0;
     padding: 20px;
@@ -44,28 +53,19 @@ const char index_html[] PROGMEM = R"rawliteral(
     font-family: "Instrument Sans", sans-serif;
     color: #333;
     font-weight: bold;
+    text-align: center;
   }
-
-  h1 {
-    font-size: 48px;
-    color: #00BFFF;
-    margin: 0;
-    padding: 0;
-    font-weight: bold;
-  }
-  .instrument-sans-custom {
-  font-family: "Instrument Sans", serif;
-  font-optical-sizing: auto;
-  font-weight: 700;
-  font-style: normal;
-  font-variation-settings:
-    "wdth" 100;
-}
 
   .container {
     width: 80%;
     margin: 0 auto;
     text-align: left;
+  }
+
+  h1 {
+    font-size: 48px;
+    color: #00BFFF;
+    margin-bottom: 20px;
   }
 
   .label {
@@ -77,23 +77,32 @@ const char index_html[] PROGMEM = R"rawliteral(
   }
 
   input[type="range"] {
+    -webkit-appearance: none;
     width: 100%;
-    -webkit-appearance: none; 
-    background: #ccc; 
-    height: 10px;
-    border-radius: 5px;
+    height: 20px; /* Augmente l'épaisseur */
+    background: #ccc;
+    border-radius: 10px;
     outline: none;
     margin-bottom: 10px;
   }
 
   input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; 
-    width: 20px;
-    height: 20px;
+    -webkit-appearance: none;
+    width: 40px; /* Bouton plus large */
+    height: 40px;
     background: #00BFFF;
+    border: 2px solid #333;
     border-radius: 50%;
     cursor: pointer;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 40px;
+    height: 40px;
+    background: #00BFFF;
     border: 2px solid #333;
+    border-radius: 50%;
+    cursor: pointer;
   }
 
   input[type="color"] {
@@ -119,8 +128,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   .footer-image {
     display: block;
-    margin: 40px auto 0;
-    width: 80%;
+    margin: 5px auto 0;
+    width: 150%;
   }
 </style>
 </head>
@@ -167,9 +176,57 @@ function toggleMode() {
 
 </body>
 </html>
+
+
 )rawliteral";
 
+
+
 WebServer server(80);
+
+// Fonction pour mettre à jour le firmware
+void updateFirmwareFromURL(const char* url) {
+  HTTPClient http;
+  http.begin(url);
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    int contentLength = http.getSize();
+    WiFiClient * stream = http.getStreamPtr();
+
+    if (contentLength > 0) {
+      // Commencer la mise à jour
+      if (!Update.begin(contentLength)) {
+        Serial.println("Update.begin() failed.");
+        return;
+      }
+
+      size_t written = Update.writeStream(*stream);
+      if (written == contentLength) {
+        Serial.println("Update success: " + String(written) + " bytes written.");
+      } else {
+        Serial.println("Update failed. Written only " + String(written) + " out of " + String(contentLength) + " bytes.");
+      }
+
+      if (Update.end()) {
+        if (Update.isFinished()) {
+          Serial.println("Update successfully completed. Rebooting...");
+          delay(1000);
+          ESP.restart();
+        } else {
+          Serial.println("Update not finished? Something went wrong.");
+        }
+      } else {
+        Serial.println("Update.end() failed. Error #: " + String(Update.getError()));
+      }
+    } else {
+      Serial.println("No content in HTTP response for firmware update.");
+    }
+  } else {
+    Serial.println("HTTP GET failed, error: " + http.errorToString(httpCode));
+  }
+  http.end();
+}
+
 
 String htmlProcessor(const char* html) {
   String page = String(html);
@@ -259,6 +316,21 @@ void setupWebServer() {
     mode = (mode == 0) ? 1 : 0;
     preferences.putUInt("mode", (unsigned int)mode);
     server.send(200, "text/plain", "Mode changé");
+  });
+
+  // Nouveau handler pour la mise à jour
+  server.on("/updatefirmware", HTTP_GET, [](){
+    server.send(200, "text/plain", "Mise à jour du firmware lancée, veuillez patienter...");
+    // Lancer la mise à jour dans une autre fonction
+    updateFirmwareFromURL("http://denisdenis.gaetanstreel.com/firmware.bin");
+  });
+
+   // Nouveau handler pour réinitialiser les identifiants WiFi
+  server.on("/resetwifi", HTTP_GET, [](){
+    wm.resetSettings(); // Réinitialise les identifiants WiFi stockés
+    server.send(200, "text/plain", "Les identifiants WiFi ont été réinitialisés. Redémarrage...");
+    delay(2000);
+    ESP.restart();
   });
 
   server.begin();
@@ -366,10 +438,13 @@ void setup() {
   mode = preferences.getUInt("mode", 0);
 
   // Configuration WiFi via WiFiManager
-  WiFiManager wm;
+  
   wm.autoConnect("AfricanChild", "fuckthatshit");
   Serial.print("Connecté au WiFi, adresse IP: ");
   Serial.println(WiFi.localIP());
+
+  Serial.print("VERSION "); // Affiche la version du firmware
+  Serial.println(VERSION);
 
   // Initialisation mDNS avec le nom "fuckthatshit"
   if (MDNS.begin("fuckthatshit")) {
