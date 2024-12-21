@@ -5,10 +5,10 @@
 #include <WiFiManager.h>
 #include <Preferences.h>
 #include <ESPmDNS.h> // Pour le mDNS
-#include <HTTPClient.h>    // Nécessaire pour télécharger le firmware
-#include <Update.h>        // Nécessaire pour appliquer la mise à jour
+#include <HTTPClient.h>     // Nécessaire pour télécharger le firmware
+#include <Update.h>         // Nécessaire pour appliquer la mise à jour
 
-#define VERSION 17 // version du firmware
+#define VERSION 25 // version du firmware
 // Nombre maximum de LEDs autorisées
 #define MAX_LEDS 144
 #define LED_PIN 4
@@ -18,11 +18,11 @@ CRGB leds[MAX_LEDS];
 CRGB baseColor = CRGB::White;
 
 // Paramètres internes
-float maxVolume = 500;        // Interne : 200 à 3000
+float maxVolume = 500;          // Interne : 200 à 3000
 float smoothingFactor = 0.05; // Interne : 1.0 à 0.01
 float smoothedVolume = 0;
-int ledCount = 10;            // Nombre de LEDs
-int mode = 0;                 // 0: Audio (réactif), 1: Fixe
+int ledCount = 10;              // Nombre de LEDs
+int mode = 0;                   // 0: Audio (réactif), 1: Fixe
 
 // Objet Preferences
 Preferences preferences;
@@ -37,12 +37,12 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FUCK THAT SHIT</title>
-  <!-- 
-Firmware VERSION 17
-curseurs plus épais, le reste ne change pas
+<title>FUCK THAT SHIT!</title>
+ <!-- 
+Firmware VERSION 25
+
         -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
+ <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@700&display=swap" rel="stylesheet">
 <style>
@@ -68,7 +68,10 @@ curseurs plus épais, le reste ne change pas
     margin-bottom: 20px;
   }
 
-  .label {
+  .label-output {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     font-size: 20px;
     font-weight: bold;
     color: #000;
@@ -128,36 +131,46 @@ curseurs plus épais, le reste ne change pas
 
   .footer-image {
     display: block;
-    margin: 5px auto 0;
-    width: 150%;
+    margin: 20px auto;
+    width: 100%;
+    max-width: 400px;
   }
 </style>
 </head>
 <body>
 <div class="container">
   <h1 class="instrument-sans-custom">DenisDenis</h1>
+  <img src="https://denisdenis.gaetanstreel.com/denis.png" alt="Rock Hand" class="footer-image">
+
   <form id="controlForm" action="/set" method="GET">
 
-    <div class="label">Nombre de LEDs</div>
-    <input type="range" name="ledCount" min="0" max="144" value="%LED_COUNT%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-    <output>%LED_COUNT%</output>
+    <div class="label-output">
+      <span>Nombre de LEDs</span>
+      <output id="ledCountOutput">%LED_COUNT%</output>
+    </div>
+    <input type="range" name="ledCount" min="0" max="144" value="%LED_COUNT%" oninput="updateOutput(this, 'ledCountOutput')" onchange="updateValues()">
 
-    <div class="label">Sensibility</div>
-    <input type="range" name="sensibility" min="0" max="100" value="%SENSIBILITY%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-    <output>%SENSIBILITY%</output>
+    <div class="label-output">
+      <span>Sensibility</span>
+      <output id="sensibilityOutput">%SENSIBILITY%</output>
+    </div>
+    <input type="range" name="sensibility" min="0" max="100" value="%SENSIBILITY%" oninput="updateOutput(this, 'sensibilityOutput')" onchange="updateValues()">
 
-    <div class="label">Smoothness</div>
-    <input type="range" name="smoothness" min="0" max="100" value="%SMOOTHNESS_SLIDER%" oninput="this.nextElementSibling.value = this.value" onchange="updateValues()">
-    <output>%SMOOTHNESS_SLIDER%</output>
+<div class="label-output">
+  <span>Smoothness</span>
+  <output id="smoothnessOutput">%SMOOTHNESS_SLIDER%</output>
+</div>
+<input type="range" name="smoothness" min="0" max="100" value="%SMOOTHNESS_SLIDER%" oninput="updateOutput(this, 'smoothnessOutput')" onchange="updateValues()">
 
-    <div class="label">Color picker</div>
-    <input type="color" name="baseColor" value="#ffffff" oninput="updateValues()">
+<div class="label">Color picker</div>
+<input type="color" name="baseColor" value="%BASE_COLOR%" oninput="updateValues()">
+
 
     <input type="button" value="MODE %MODE_LABEL%" onclick="toggleMode()">
 
   </form>
 
-  <img src="https://denisdenis.gaetanstreel.com/denis.png" alt="Rock Hand" class="footer-image">
+  
 </div>
 
 <script>
@@ -168,14 +181,22 @@ function updateValues() {
   fetch(`/set?${queryString}`);
 }
 
+function updateOutput(slider, outputId) {
+  document.getElementById(outputId).innerText = slider.value;
+}
+
 function toggleMode() {
   fetch('/toggleMode');
   setTimeout(() => window.location.reload(), 500);
 }
 </script>
-
 </body>
+
 </html>
+
+
+
+
 
 
 )rawliteral";
@@ -240,8 +261,11 @@ String htmlProcessor(const char* html) {
   if (sensibilitySlider < 0) sensibilitySlider = 0;
   if (sensibilitySlider > 100) sensibilitySlider = 100;
 
+  // Récupération correcte de smoothingFactor depuis preferences
+  smoothingFactor = preferences.getFloat("smoothingFactor", 0.05);
+
   // smoothingFactor -> smoothnessSlider (0-100)
-  int smoothnessSlider = (int)((1.0 - smoothingFactor) / 0.0099);
+  int smoothnessSlider = (int)((0.1 - smoothingFactor) / 0.001); // Formule corrigée
   if (smoothnessSlider < 0) smoothnessSlider = 0;
   if (smoothnessSlider > 100) smoothnessSlider = 100;
 
@@ -251,6 +275,10 @@ String htmlProcessor(const char* html) {
   page.replace("%SMOOTHNESS_SLIDER%", String(smoothnessSlider));
   page.replace("%LED_COUNT%", String(ledCount));
   page.replace("%MODE_LABEL%", modeLabel);
+    // Remplace %BASE_COLOR% par la couleur actuelle
+  char color[8];
+  sprintf(color, "#%02X%02X%02X", baseColor.r, baseColor.g, baseColor.b);
+  page.replace("%BASE_COLOR%", String(color));
 
   return page;
 }
@@ -275,7 +303,7 @@ void setupWebServer() {
     // smoothness -> smoothingFactor
     if (server.hasArg("smoothness")) {
       int sliderValue = server.arg("smoothness").toInt();
-      float newSmoothingFactor = (1.0 - (0.0099 * sliderValue))/10.0;
+      float newSmoothingFactor = 0.1 - (0.001 * sliderValue); // Formule corrigée
       smoothingFactor = newSmoothingFactor;
       preferences.putFloat("smoothingFactor", smoothingFactor);
     }
@@ -325,7 +353,7 @@ void setupWebServer() {
     updateFirmwareFromURL("http://denisdenis.gaetanstreel.com/firmware.bin");
   });
 
-   // Nouveau handler pour réinitialiser les identifiants WiFi
+    // Nouveau handler pour réinitialiser les identifiants WiFi
   server.on("/resetwifi", HTTP_GET, [](){
     wm.resetSettings(); // Réinitialise les identifiants WiFi stockés
     server.send(200, "text/plain", "Les identifiants WiFi ont été réinitialisés. Redémarrage...");
